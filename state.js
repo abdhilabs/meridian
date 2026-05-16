@@ -330,12 +330,6 @@ export function getTrackedPosition(position_address) {
   return state.positions[position_address] || null;
 }
 
-export function getTrackedPositions(includeClosed = false) {
-  const state = load();
-  const all = Object.values(state.positions);
-  return includeClosed ? all : all.filter((p) => !p.closed);
-}
-
 /**
  * Summarize state for the agent system prompt.
  */
