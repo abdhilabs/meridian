@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { generatePnlCard } from "./pnlCard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -139,6 +140,31 @@ export async function sendMessageWithButtons(text, inlineKeyboard) {
 export async function sendHTML(html) {
   if (!TOKEN || !chatId) return;
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
+}
+
+export async function sendPhoto(photoPath, caption = "") {
+  if (!TOKEN || !chatId) return null;
+  if (!fs.existsSync(photoPath)) {
+    log("telegram_warn", `sendPhoto: file not found: ${photoPath}`);
+    return null;
+  }
+  try {
+    const formData = new FormData();
+    formData.append("chat_id", chatId);
+    formData.append("photo", new Blob([fs.readFileSync(photoPath)]), path.basename(photoPath));
+    if (caption) formData.append("caption", String(caption).slice(0, 1024));
+    formData.append("parse_mode", "HTML");
+    const res = await fetch(`${BASE}/sendPhoto`, { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.text();
+      log("telegram_error", `sendPhoto ${res.status}: ${err.slice(0, 200)}`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    log("telegram_error", `sendPhoto failed: ${e.message}`);
+    return null;
+  }
 }
 
 export async function editMessage(text, messageId) {
@@ -421,13 +447,23 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlPct }) {
+export async function notifyClose({ pair, pnlUsd, pnlPct, tx, reason }) {
   if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
-  await sendHTML(
-    `🔒 <b>Closed</b> ${pair}\n` +
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
-  );
+  const reasonLine = reason ? `\nReason: ${reason}` : "";
+  const caption = `🔒 <b>Closed</b> ${pair}\nPnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)${reasonLine}`;
+
+  // Generate PnL card image if we have a tx signature
+  if (tx) {
+    const cardPath = await generatePnlCard(tx, pair);
+    if (cardPath) {
+      await sendPhoto(cardPath, caption);
+      return;
+    }
+  }
+
+  // Fallback: send text only
+  await sendHTML(caption);
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {
