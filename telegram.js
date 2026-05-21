@@ -447,23 +447,42 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
+let _closeQueue = Promise.resolve();
+let _processedTxs = new Set();
+
 export async function notifyClose({ pair, pnlUsd, pnlPct, tx, reason }) {
   if (hasActiveLiveMessage()) return;
-  const sign = pnlUsd >= 0 ? "+" : "";
-  const reasonLine = reason ? `\nReason: ${reason}` : "";
-  const caption = `🔒 <b>Closed</b> ${pair}\nPnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)${reasonLine}`;
+  if (tx && _processedTxs.has(tx)) return;
 
-  // Generate PnL card image if we have a tx signature
-  if (tx) {
-    const cardPath = await generatePnlCard(tx, pair);
-    if (cardPath) {
-      await sendPhoto(cardPath, caption);
-      return;
+  _closeQueue = _closeQueue.then(async () => {
+    // Deduplicate by TX signature
+    if (tx) {
+      if (_processedTxs.has(tx)) return;
+      _processedTxs.add(tx);
     }
-  }
 
-  // Fallback: send text only
-  await sendHTML(caption);
+    const sign = pnlUsd >= 0 ? "+" : "";
+    // HTML escape reason to prevent broken entities in Telegram HTML parse mode
+    const escapedReason = reason ? reason.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : "";
+    const reasonLine = escapedReason ? `\nReason: ${escapedReason}` : "";
+    const caption = `🔒 <b>Closed</b> ${pair}\nPnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)${reasonLine}`;
+
+    // Generate PnL card image if we have a tx signature
+    if (tx) {
+      const cardPath = await generatePnlCard(tx, pair);
+      if (cardPath) {
+        await sendPhoto(cardPath, caption);
+        return;
+      }
+    }
+
+    // Fallback: send text only
+    await sendHTML(caption);
+  }).catch(err => {
+    console.error('notifyClose queue error:', err);
+  });
+
+  return _closeQueue;
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {
