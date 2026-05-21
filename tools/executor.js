@@ -600,7 +600,9 @@ export async function executeTool(name, args) {
       } else if (name === "deploy_position") {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
-        setImmediate(() => notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, tx: result.txs?.[0] || result.close_txs?.[0], reason: args.reason }).catch(() => {}));
+        const closeTx = result.close_txs?.[0] || result.txs?.[result.txs.length - 1];
+        log("executor", `notifyClose: pair=${result.pool_name || args.position_address?.slice(0, 8)} tx=${closeTx?.slice(0, 16)}...`);
+        setImmediate(() => notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, tx: closeTx, reason: args.reason }).catch(() => {}));
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;
