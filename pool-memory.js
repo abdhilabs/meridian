@@ -203,9 +203,15 @@ export function recordPoolDeploy(poolAddress, deployData) {
       cooldownHours > 0 &&
       recentRepeatDeploys.length >= triggerCount &&
       recentRepeatDeploys.every((d) => d.pnl_pct != null && isFeeGeneratingDeploy(d));
+    const repeatedFailedDeploys =
+      cooldownHours > 0 &&
+      recentRepeatDeploys.length >= triggerCount &&
+      recentRepeatDeploys.every((d) => d.pnl_pct != null && (d.pnl_pct < 0 || !isFeeGeneratingDeploy(d)));
 
-    if (repeatedFeeGeneratingDeploys) {
-      const reason = `repeat fee-generating deploys (${triggerCount}x)`;
+    if (repeatedFeeGeneratingDeploys || repeatedFailedDeploys) {
+      const reason = repeatedFailedDeploys
+        ? `repeat failed deploys (${triggerCount}x)`
+        : `repeat fee-generating deploys (${triggerCount}x)`;
       if (scope === "pool" || scope === "both" || !entry.base_mint) {
         const poolCooldownUntil = setPoolCooldown(entry, cooldownHours, reason);
         log("pool-memory", `Cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);

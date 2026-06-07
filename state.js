@@ -104,6 +104,7 @@ export function trackPosition({
     closed_at: null,
     notes: [],
     peak_pnl_pct: 0,
+    lowest_pnl_pct: 0,
     pending_peak_pnl_pct: null,
     pending_peak_started_at: null,
     pending_trailing_current_pnl_pct: null,
@@ -416,6 +417,15 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     log("state", `Position ${position_address} back in range`);
   }
 
+  // Track lowest PnL
+  if (currentPnlPct != null) {
+    const currentLowest = pos.lowest_pnl_pct ?? 0;
+    if (currentPnlPct < currentLowest) {
+      pos.lowest_pnl_pct = currentPnlPct;
+      changed = true;
+    }
+  }
+
   if (changed) save(state);
 
   // ── Stop loss ──────────────────────────────────────────────────
@@ -423,6 +433,22 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     return {
       action: "STOP_LOSS",
       reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
+    };
+  }
+
+  // ── Recovery exit — close at breakeven if was deeply underwater ──
+  const ageMins = positionData.age_minutes;
+  if (
+    !pnl_pct_suspicious &&
+    currentPnlPct != null &&
+    ageMins != null &&
+    ageMins >= (mgmtConfig.recoveryMinMinutes ?? 60) &&
+    currentPnlPct >= (mgmtConfig.recoveryTriggerPct ?? 1) &&
+    (pos.lowest_pnl_pct ?? 0) <= (mgmtConfig.recoveryMinPct ?? -8)
+  ) {
+    return {
+      action: "RECOVERY_EXIT",
+      reason: `Recovery exit: was ${pos.lowest_pnl_pct.toFixed(2)}% low, now ${currentPnlPct.toFixed(2)}% after ${ageMins}m`,
     };
   }
 
