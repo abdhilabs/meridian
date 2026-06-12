@@ -1,6 +1,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { generatePnlCard } from "./pnlCard.js";
+import path from "path";
 import { repoPath } from "./repo-root.js";
 
 const USER_CONFIG_PATH = repoPath("user-config.json");

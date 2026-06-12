@@ -45,6 +45,10 @@ discord-signals.json
 # Playwright MCP browser logs
 .playwright-mcp/
 
+# Local tooling scratch
+_report_tmp.py
+cache/
+
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
 
