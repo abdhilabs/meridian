@@ -53,7 +53,12 @@ export async function generatePnlCard(txSignature) {
     await page.waitForSelector('input.custom-input', { timeout: 15000 });
 
     // Type the transaction signature
-    await page.fill('input.custom-input', txSignature);
+    // Use pressSequentially instead of fill() — Metlex is a React app and
+    // fill() doesn't trigger React's synthetic onChange event, leaving the
+    // submit button stuck disabled.
+    const input = page.locator('input.custom-input');
+    await input.click();
+    await input.pressSequentially(txSignature);
     log("pnlCard", `Typed tx: ${txSignature.slice(0, 16)}...`);
 
     // Click submit button (last button in main)
