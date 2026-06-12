@@ -47,3 +47,7 @@ discord-signals.json
 
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
+
+# Local scratch files (Claude Code transient reports + PnL card cache)
+_report_tmp.py
+cache/
