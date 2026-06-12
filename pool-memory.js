@@ -9,7 +9,9 @@ import fs from "fs";
 import { log } from "./logger.js";
 import { config } from "./config.js";
 
-const POOL_MEMORY_FILE = "./pool-memory.json";
+import { repoPath } from "./repo-root.js";
+
+const POOL_MEMORY_FILE = repoPath("pool-memory.json");
 const MAX_NOTE_LENGTH = 280;
 
 function sanitizeStoredNote(text, maxLen = MAX_NOTE_LENGTH) {
@@ -134,6 +136,12 @@ export function recordPoolDeploy(poolAddress, deployData) {
     close_reason: deployData.close_reason || null,
     strategy: deployData.strategy || null,
     volatility_at_deploy: deployData.volatility ?? null,
+    entry_mcap: deployData.entry_mcap ?? null,
+    entry_tvl: deployData.entry_tvl ?? null,
+    entry_volume: deployData.entry_volume ?? null,
+    exit_mcap: deployData.exit_mcap ?? null,
+    exit_tvl: deployData.exit_tvl ?? null,
+    exit_volume: deployData.exit_volume ?? null,
   };
 
   entry.deploys.push(deploy);
@@ -195,9 +203,15 @@ export function recordPoolDeploy(poolAddress, deployData) {
       cooldownHours > 0 &&
       recentRepeatDeploys.length >= triggerCount &&
       recentRepeatDeploys.every((d) => d.pnl_pct != null && isFeeGeneratingDeploy(d));
+    const repeatedFailedDeploys =
+      cooldownHours > 0 &&
+      recentRepeatDeploys.length >= triggerCount &&
+      recentRepeatDeploys.every((d) => d.pnl_pct != null && (d.pnl_pct < 0 || !isFeeGeneratingDeploy(d)));
 
-    if (repeatedFeeGeneratingDeploys) {
-      const reason = `repeat fee-generating deploys (${triggerCount}x)`;
+    if (repeatedFeeGeneratingDeploys || repeatedFailedDeploys) {
+      const reason = repeatedFailedDeploys
+        ? `repeat failed deploys (${triggerCount}x)`
+        : `repeat fee-generating deploys (${triggerCount}x)`;
       if (scope === "pool" || scope === "both" || !entry.base_mint) {
         const poolCooldownUntil = setPoolCooldown(entry, cooldownHours, reason);
         log("pool-memory", `Cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);

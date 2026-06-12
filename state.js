@@ -10,8 +10,9 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { repoPath } from "./repo-root.js";
 
-const STATE_FILE = "./state.json";
+const STATE_FILE = repoPath("state.json");
 
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;
@@ -68,6 +69,10 @@ export function trackPosition({
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
+  entry_mcap = null,
+  entry_tvl = null,
+  entry_volume = null,
+  entry_holders = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -85,6 +90,10 @@ export function trackPosition({
     initial_fee_tvl_24h: fee_tvl_ratio,
     organic_score,
     initial_value_usd,
+    entry_mcap,
+    entry_tvl,
+    entry_volume,
+    entry_holders,
     signal_snapshot: signal_snapshot || null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
@@ -95,6 +104,7 @@ export function trackPosition({
     closed_at: null,
     notes: [],
     peak_pnl_pct: 0,
+    lowest_pnl_pct: 0,
     pending_peak_pnl_pct: null,
     pending_peak_started_at: null,
     pending_trailing_current_pnl_pct: null,
@@ -407,6 +417,15 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     log("state", `Position ${position_address} back in range`);
   }
 
+  // Track lowest PnL
+  if (currentPnlPct != null) {
+    const currentLowest = pos.lowest_pnl_pct ?? 0;
+    if (currentPnlPct < currentLowest) {
+      pos.lowest_pnl_pct = currentPnlPct;
+      changed = true;
+    }
+  }
+
   if (changed) save(state);
 
   // ── Stop loss ──────────────────────────────────────────────────
@@ -414,6 +433,22 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     return {
       action: "STOP_LOSS",
       reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
+    };
+  }
+
+  // ── Recovery exit — close at breakeven if was deeply underwater ──
+  const ageMins = positionData.age_minutes;
+  if (
+    !pnl_pct_suspicious &&
+    currentPnlPct != null &&
+    ageMins != null &&
+    ageMins >= (mgmtConfig.recoveryMinMinutes ?? 60) &&
+    currentPnlPct >= (mgmtConfig.recoveryTriggerPct ?? 1) &&
+    (pos.lowest_pnl_pct ?? 0) <= (mgmtConfig.recoveryMinPct ?? -8)
+  ) {
+    return {
+      action: "RECOVERY_EXIT",
+      reason: `Recovery exit: was ${pos.lowest_pnl_pct.toFixed(2)}% low, now ${currentPnlPct.toFixed(2)}% after ${ageMins}m`,
     };
   }
 
