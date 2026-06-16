@@ -111,6 +111,8 @@ export function trackPosition({
     pending_trailing_peak_pnl_pct: null,
     pending_trailing_drop_pct: null,
     pending_trailing_started_at: null,
+    pending_lowest_pnl_pct: null,
+    pending_lowest_started_at: null,
     confirmed_trailing_exit_reason: null,
     confirmed_trailing_exit_until: null,
     trailing_active: false,
@@ -323,6 +325,58 @@ export function resolvePendingTrailingDrop(position_address, currentPnlPct, trai
   return { confirmed: false, rejected: true };
 }
 
+export function queueLowestConfirmation(position_address, candidatePnlPct, options = {}) {
+  if (candidatePnlPct == null) return false;
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos || pos.closed) return false;
+
+  const currentLowest = pos.lowest_pnl_pct ?? 0;
+  if (candidatePnlPct >= currentLowest) return false;
+
+  if (options.immediate) {
+    pos.lowest_pnl_pct = candidatePnlPct;
+    pos.pending_lowest_pnl_pct = null;
+    pos.pending_lowest_started_at = null;
+    save(state);
+    log("state", `Position ${position_address} lowest PnL accepted at ${candidatePnlPct.toFixed(2)}% from rpc poll`);
+    return true;
+  }
+
+  const changed =
+    pos.pending_lowest_pnl_pct == null ||
+    candidatePnlPct < pos.pending_lowest_pnl_pct;
+
+  if (!changed) return false;
+
+  pos.pending_lowest_pnl_pct = candidatePnlPct;
+  pos.pending_lowest_started_at = new Date().toISOString();
+  save(state);
+  log("state", `Position ${position_address} lowest candidate ${candidatePnlPct.toFixed(2)}% queued for 15s confirmation`);
+  return true;
+}
+
+export function resolvePendingLowest(position_address, currentPnlPct, tolerancePct = 2.0) {
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos || pos.closed || pos.pending_lowest_pnl_pct == null) return { confirmed: false, pending: false };
+
+  const pendingLowest = pos.pending_lowest_pnl_pct;
+  pos.pending_lowest_pnl_pct = null;
+  pos.pending_lowest_started_at = null;
+
+  if (currentPnlPct != null && currentPnlPct <= pendingLowest + tolerancePct) {
+    pos.lowest_pnl_pct = Math.min(pos.lowest_pnl_pct ?? 0, pendingLowest, currentPnlPct);
+    save(state);
+    log("state", `Position ${position_address} lowest PnL confirmed at ${pos.lowest_pnl_pct.toFixed(2)}% after recheck (pending: ${pendingLowest.toFixed(2)}%, current: ${currentPnlPct.toFixed(2)}%)`);
+    return { confirmed: true, lowest: pos.lowest_pnl_pct };
+  }
+
+  save(state);
+  log("state", `Position ${position_address} rejected pending lowest ${pendingLowest.toFixed(2)}% after 15s recheck (current: ${currentPnlPct ?? "?"}%, tolerance: ${tolerancePct}%)`);
+  return { confirmed: false, rejected: true, pendingLowest };
+}
+
 /**
  * Get all tracked positions (optionally filter open-only).
  */
@@ -417,14 +471,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     log("state", `Position ${position_address} back in range`);
   }
 
-  // Track lowest PnL
-  if (currentPnlPct != null) {
-    const currentLowest = pos.lowest_pnl_pct ?? 0;
-    if (currentPnlPct < currentLowest) {
-      pos.lowest_pnl_pct = currentPnlPct;
-      changed = true;
-    }
-  }
+  // lowest_pnl_pct is now tracked via queueLowestConfirmation → 15s timer → resolvePendingLowest
 
   if (changed) save(state);
 

@@ -25,7 +25,7 @@ import {
   createLiveMessage,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop, queueLowestConfirmation, resolvePendingLowest } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -95,10 +95,13 @@ let _screeningLastTriggered = 0; // epoch ms — prevents management from spammi
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
+const _lowestConfirmTimers = new Map();
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
 const TRAILING_DROP_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_DROP_CONFIRM_TOLERANCE_PCT = 1.0;
+const TRAILING_LOWEST_CONFIRM_DELAY_MS = 15_000;
+const TRAILING_LOWEST_CONFIRM_TOLERANCE_PCT = 2.0;
 
 /** Strip <think>...</think> reasoning blocks that some models leak into output */
 function stripThink(text) {
@@ -162,6 +165,23 @@ function scheduleTrailingDropConfirmation(positionAddress) {
   }, TRAILING_DROP_CONFIRM_DELAY_MS);
 
   _trailingDropConfirmTimers.set(positionAddress, timer);
+}
+
+function scheduleLowestConfirmation(positionAddress) {
+  if (!positionAddress || _lowestConfirmTimers.has(positionAddress)) return;
+
+  const timer = setTimeout(async () => {
+    _lowestConfirmTimers.delete(positionAddress);
+    try {
+      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
+      const position = result?.positions?.find((p) => p.position === positionAddress);
+      resolvePendingLowest(positionAddress, position?.pnl_pct ?? null, TRAILING_LOWEST_CONFIRM_TOLERANCE_PCT);
+    } catch (error) {
+      log("state_warn", `Lowest confirmation failed for ${positionAddress}: ${error.message}`);
+    }
+  }, TRAILING_LOWEST_CONFIRM_DELAY_MS);
+
+  _lowestConfirmTimers.set(positionAddress, timer);
 }
 
 async function runBriefing() {
@@ -242,6 +262,8 @@ export async function runManagementCycle({ silent = false } = {}) {
       ) {
         schedulePeakConfirmation(p.position);
       }
+      queueLowestConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) && shouldUsePnlRecheck();
+      scheduleLowestConfirmation(p.position);
       const exit = updatePnlAndCheckExits(p.position, p, config.management);
       if (exit) {
         if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
@@ -798,6 +820,8 @@ Summarize the current portfolio health, total fees earned, and performance of al
         ) {
           schedulePeakConfirmation(p.position);
         }
+        queueLowestConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) && shouldUsePnlRecheck();
+        scheduleLowestConfirmation(p.position);
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
         if (exit) {
           if (exit.action === "TRAILING_TP" && exit.needs_confirmation && shouldUsePnlRecheck()) {
